@@ -1,0 +1,11 @@
+# Exported from Render on 2025-02-26T11:34:36Z
+services:
+- type: web
+  name: Live_Oyalo_Sales
+  runtime: python
+  repo: https://github.com/VigneshArumugam10/Live_Oyalo_Sales
+  plan: free
+  region: oregon
+  buildCommand: pip install -r requirements.txt
+  startCommand: gunicorn -w 1 -b 0.0.0.0:10000 app:app
+version: "1"
