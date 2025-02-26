@@ -696,13 +696,15 @@ def health_check_endpoint():
     return response_data
 
 if __name__ == "__main__":
-    # Create initial charts
-    create_initial_charts()
-    
-    # Start the chart update thread
-    chart_thread = threading.Thread(target=update_all_charts, daemon=True)
-    chart_thread.start()
-    
-    # Run the Flask app
-    print("Starting Flask server...")
-    app.run(host="0.0.0.0", port=10000, debug=False)
+    import os
+    port = int(os.environ.get("PORT", 10000))
+
+    print("🛠 Ensuring static directory exists before starting...")
+    ensure_static_dir()
+
+    print("🔄 Manually updating all charts before server starts...")
+    update_all_charts()  # Run first update synchronously before Flask starts
+
+    print("🚀 Starting Flask server on port", port)
+    app.run(host="0.0.0.0", port=port, debug=False)
+
