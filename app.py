@@ -517,21 +517,34 @@ if __name__ == "__main__":
     # Ensure the static directory exists
     os.makedirs("static", exist_ok=True)
 
-    # Create initial blank charts
-    print("Generating placeholder charts...")
+    print("🔧 Ensuring placeholder charts exist...")
     create_initial_charts()
 
-    # Immediately fetch data and generate the first set of charts
-    print("Fetching initial sales data and generating charts...")
-    update_all_charts()  # This ensures charts exist before the first request
+    print("📡 Fetching initial sales data and generating first charts...")
+    
+    # Try multiple times to get the initial data and generate charts
+    retries = 3
+    for attempt in range(retries):
+        aggregated_sales = fetch_sales_data()
+        if not aggregated_sales.empty:
+            print(f"Data fetched on attempt {attempt + 1}, generating charts...")
+            update_single_chart(aggregated_sales, "table", table_chart_path, plot_table_chart)
+            update_single_chart(aggregated_sales, "net_amount", net_amount_chart_path, plot_net_amount_chart)
+            update_single_chart(aggregated_sales, "bill_cuts", bill_cuts_chart_path, plot_bill_cuts_chart)
+            update_single_chart(aggregated_sales, "net_amount_by_branch_type", net_amount_by_branch_type_chart_path, plot_net_amount_by_branch_type_chart)
+            update_single_chart(aggregated_sales, "bill_cuts_by_branch_type", bill_cuts_by_branch_type_chart_path, plot_bill_cuts_by_branch_type_chart)
+            print("Initial charts generated successfully.")
+            break
+        else:
+            print(f"⚠Attempt {attempt + 1} failed: No data fetched. Retrying in 10 seconds...")
+            time.sleep(10)
 
-    # Start a background thread to continuously update charts
-    print("Starting background chart generation thread...")
+    print("Starting background chart update thread...")
     chart_thread = threading.Thread(target=update_all_charts, daemon=True)
     chart_thread.start()
 
-    # Start Flask server
     print("Starting Flask server...")
     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
+
 
 
