@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-from io import BytesIO
 import requests
 from datetime import datetime
 import jwt
@@ -9,7 +6,7 @@ import matplotlib.pyplot as plt
 import os
 import time
 import threading
-from flask import Flask, send_file, render_template_string, Response
+from flask import Flask, send_file, render_template_string
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -29,45 +26,14 @@ branch_codes = [
 ]
 
 # Paths for each chart
-STATIC_DIR = "static"
-TABLE_CHART = "table_chart.png"
-NET_AMOUNT_CHART = "net_amount_chart.png"
-BILL_CUTS_CHART = "bill_cuts_chart.png"
-NET_AMOUNT_BY_BRANCH_TYPE_CHART = "net_amount_by_branch_type_chart.png"
-BILL_CUTS_BY_BRANCH_TYPE_CHART = "bill_cuts_by_branch_type_chart.png"
-
-# Full paths
-table_chart_path = os.path.join(STATIC_DIR, TABLE_CHART)
-net_amount_chart_path = os.path.join(STATIC_DIR, NET_AMOUNT_CHART)
-bill_cuts_chart_path = os.path.join(STATIC_DIR, BILL_CUTS_CHART)
-net_amount_by_branch_type_chart_path = os.path.join(STATIC_DIR, NET_AMOUNT_BY_BRANCH_TYPE_CHART)
-bill_cuts_by_branch_type_chart_path = os.path.join(STATIC_DIR, BILL_CUTS_BY_BRANCH_TYPE_CHART)
-
-# In-memory chart storage as backup in case file system permissions are restricted
-chart_memory_store = {
-    "table": None,
-    "net_amount": None,
-    "bill_cuts": None,
-    "net_amount_by_branch_type": None,
-    "bill_cuts_by_branch_type": None
-}
+table_chart_path = "static/table_chart.png"
+net_amount_chart_path = "static/net_amount_chart.png"
+bill_cuts_chart_path = "static/bill_cuts_chart.png"
+net_amount_by_branch_type_chart_path = "static/net_amount_by_branch_type_chart.png"
+bill_cuts_by_branch_type_chart_path = "static/bill_cuts_by_branch_type_chart.png"
 
 # Ensure the static folder exists
-def ensure_static_dir():
-    try:
-        os.makedirs(STATIC_DIR, exist_ok=True)
-        print(f"Static directory created/confirmed at: {os.path.abspath(STATIC_DIR)}")
-        # Test write permissions
-        test_file = os.path.join(STATIC_DIR, "test_write.txt")
-        with open(test_file, 'w') as f:
-            f.write("Test write access")
-        os.remove(test_file)
-        print("Write access to static directory confirmed.")
-        return True
-    except Exception as e:
-        print(f"⚠️ Error with static directory: {e}")
-        print(f"Will use in-memory storage for charts as fallback.")
-        return False
+os.makedirs("static", exist_ok=True)
 
 # Dictionary for mapping branch codes to branch types
 branch_type_mapping = {
@@ -83,74 +49,59 @@ branch_type_mapping = {
 def map_branch_type(branch_code):
     return branch_type_mapping.get(str(branch_code), "Other")  # Default to "Other" if not in the list
 
-# Create initial empty charts
+# Create initial empty charts if they don't exist to prevent blank screens on first load
 def create_initial_charts():
-    has_file_storage = ensure_static_dir()
-    
-    # Create a placeholder loading image
-    plt.figure(figsize=(14, 8))
-    plt.text(0.5, 0.5, "Loading data...", horizontalalignment='center', 
-             verticalalignment='center', fontsize=24)
-    plt.axis('off')
-    
-    # Save both to file system (if available) and in-memory
-    for chart_name in ["table", "net_amount", "bill_cuts", "net_amount_by_branch_type", "bill_cuts_by_branch_type"]:
-        # Save to memory buffer
-        buffer = BytesIO()
-        plt.savefig(buffer, format="png")
-        buffer.seek(0)
-        chart_memory_store[chart_name] = buffer.getvalue()
-        
-        # Try to save to file system
-        if has_file_storage:
-            try:
-                chart_path = os.path.join(STATIC_DIR, f"{chart_name}_chart.png")
-                plt.savefig(chart_path)
-                print(f"Created placeholder chart at {chart_path}")
-            except Exception as e:
-                print(f"Could not save placeholder to disk for {chart_name}: {e}")
-    
-    plt.close()
+    for chart_path in [table_chart_path, net_amount_chart_path, bill_cuts_chart_path, 
+                       net_amount_by_branch_type_chart_path, bill_cuts_by_branch_type_chart_path]:
+        if not os.path.exists(chart_path):
+            plt.figure(figsize=(14, 8))
+            plt.text(0.5, 0.5, "Loading data...", horizontalalignment='center', 
+                     verticalalignment='center', fontsize=24)
+            plt.axis('off')
+            plt.savefig(chart_path)
+            plt.close()
 
+# Function to fetch sales data from API
 def fetch_sales_data():
     all_items = []
     date_str = datetime.today().strftime('%Y-%m-%d')
-    print(f"📅 Fetching sales data for {date_str}...")
 
     for branch_code in branch_codes:
         last_key = None
-        print(f"Fetching data for branch {branch_code}...")
-
         while True:
+            # Token payload
             payload = {
                 "iss": api_key,
                 "iat": datetime.utcnow(),
                 "jti": "YOUR_UNIQUE_JWT_ID"
             }
 
+            # Generate the token
             token = jwt.encode(payload, secret_key, algorithm="HS256")
 
+            # Include the token in the headers
             headers = {
                 "x-api-key": api_key,
                 "x-api-token": token
             }
 
+            # API URL with the current date and last key
             url = f"https://api.ristaapps.com/v1/sales/summary?branch={branch_code}&day={date_str}"
             if last_key:
                 url += f"&lastKey={last_key}"
 
             try:
+                # Make the request
                 response = requests.get(url, headers=headers, timeout=10)
-                response.raise_for_status()
+                response.raise_for_status()  # Raise exception for HTTP errors
                 data = response.json().get('data', [])
 
+                # Normalize and flatten the data, then append to the list
                 if data:
-                    print(f"Data received for branch {branch_code} ({len(data)} records).")
                     flattened_data = pd.json_normalize(data)
                     all_items.append(flattened_data)
-                else:
-                    print(f" No data received for branch {branch_code}.")
 
+                # Check if there is a last key for pagination
                 last_key = response.json().get("lastKey")
                 if not last_key:
                     break
@@ -158,12 +109,10 @@ def fetch_sales_data():
                 print(f"Error fetching data for branch {branch_code}: {e}")
                 break  # Move to next branch on error
 
+    # Process data if retrieved
     if all_items:
         sales_df = pd.concat(all_items, ignore_index=True)
         closed_sales_df = sales_df[sales_df['status'] == 'Closed']
-
-        if closed_sales_df.empty:
-            print(" No closed sales records found.")
 
         aggregated_sales = closed_sales_df.groupby(['branchName', 'branchCode']).agg({
             'netAmount': 'sum',
@@ -172,89 +121,71 @@ def fetch_sales_data():
 
         aggregated_sales.rename(columns={'netAmount': 'Net Amount', 'invoiceNumber': 'Bill Cuts'}, inplace=True)
 
-        print("Sales data successfully processed.")
         return aggregated_sales
 
-    print("No sales data available.")
     return pd.DataFrame()  # Return empty DataFrame if no data
 
-
+# Function to generate and update all charts in a single thread
 def update_all_charts():
     """Single function to update all charts in sequence"""
     while True:
         try:
-            print(f"🔄 Starting chart update cycle at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            # Fetch data once for all charts
+            print("Fetching sales data...")
             aggregated_sales = fetch_sales_data()
             
-            if aggregated_sales.empty:
-                print("⚠️ No data fetched from API. Skipping chart updates.")
-                time.sleep(60)  # Wait a minute before retrying
-                continue
-
-            print(f"✅ Data fetched at {datetime.now()}, updating charts...")
-
-            chart_types = [
-                ("table", table_chart_path, plot_table_chart),
-                ("net_amount", net_amount_chart_path, plot_net_amount_chart), 
-                ("bill_cuts", bill_cuts_chart_path, plot_bill_cuts_chart),
-                ("net_amount_by_branch_type", net_amount_by_branch_type_chart_path, plot_net_amount_by_branch_type_chart),
-                ("bill_cuts_by_branch_type", bill_cuts_by_branch_type_chart_path, plot_bill_cuts_by_branch_type_chart)
-            ]
-            
-            for chart_name, chart_path, plot_function in chart_types:
-                update_single_chart(aggregated_sales, chart_name, chart_path, plot_function)
-                print(f"📊 {chart_name} chart updated.")
+            if not aggregated_sales.empty:
+                print(f"Data fetched at {datetime.now()}, updating charts...")
+                
+                # Generate each chart with unique file handling
+                update_single_chart(aggregated_sales, "table", table_chart_path, plot_table_chart)
+                # Make sure previous chart is closed before starting next one
                 plt.close('all')
-
-            print("✅ All charts updated successfully.")
-            
+                
+                update_single_chart(aggregated_sales, "net_amount", net_amount_chart_path, plot_net_amount_chart)
+                plt.close('all')
+                
+                update_single_chart(aggregated_sales, "bill_cuts", bill_cuts_chart_path, plot_bill_cuts_chart)
+                plt.close('all')
+                
+                update_single_chart(aggregated_sales, "net_amount_by_branch_type", net_amount_by_branch_type_chart_path, plot_net_amount_by_branch_type_chart)
+                plt.close('all')
+                
+                update_single_chart(aggregated_sales, "bill_cuts_by_branch_type", bill_cuts_by_branch_type_chart_path, plot_bill_cuts_by_branch_type_chart)
+                plt.close('all')
+                
+                print("All charts updated successfully")
+            else:
+                print("Warning: No data available for charts")
         except Exception as e:
-            print(f"❌ Error in chart update cycle: {e}")
+            print(f"Error in chart update cycle: {e}")
             import traceback
             traceback.print_exc()
-
-        print("⏳ Sleeping for 5 minutes until next update...")
-        time.sleep(300)  # 5-minute refresh
-
-
-from io import BytesIO
+            
+        print(f"Sleeping for 5 minutes until next update...")
+        time.sleep(300)  # 5 minute refresh
 
 def update_single_chart(data, chart_name, chart_path, plot_function):
     """Update a single chart with proper error handling and file management"""
     print(f"Generating {chart_name} chart...")
     
-    has_file_storage = ensure_static_dir()
+    # Use a unique temporary filename
+    temp_path = f"static/{chart_name}_temp_{int(time.time())}.png"
     
     try:
-        # Create a figure for this chart
+        # Create a new plotting figure with unique identifier
         plt.figure(figsize=(16, 8), num=f"{chart_name}_{time.time()}")
         
-        # Generate the chart
-        buffer = BytesIO()
-        plot_function(data, buffer)
-        buffer.seek(0)
+        # Generate the chart to the temp file
+        plot_function(data, temp_path)
         
-        # Store in memory
-        chart_memory_store[chart_name] = buffer.getvalue()
-        print(f"Successfully updated {chart_name} chart in memory")
-        
-        # Try to save to disk if we have file storage
-        if has_file_storage:
-            try:
-                # Generate a new buffer for file storage
-                file_buffer = BytesIO()
-                plot_function(data, file_buffer)
-                file_buffer.seek(0)
-                
-                # Ensure the directory exists
-                os.makedirs(os.path.dirname(chart_path), exist_ok=True)
-                
-                # Save to disk
-                with open(chart_path, 'wb') as f:
-                    f.write(file_buffer.getvalue())
-                print(f"Successfully updated {chart_name} chart on disk")
-            except Exception as e:
-                print(f"Error saving {chart_name} chart to disk: {e}")
+        # Verify the temp file exists and has a reasonable size
+        if os.path.exists(temp_path) and os.path.getsize(temp_path) > 1000:
+            # Replace the old chart with the new one
+            os.replace(temp_path, chart_path)
+            print(f"Successfully updated {chart_name} chart")
+        else:
+            print(f"Warning: Generated chart {temp_path} is missing or too small")
     except Exception as e:
         print(f"Error generating {chart_name} chart: {e}")
         import traceback
@@ -262,6 +193,13 @@ def update_single_chart(data, chart_name, chart_path, plot_function):
     finally:
         # Close the plot
         plt.close()
+        
+        # Clean up temp file if it's still around
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except:
+                pass
 
 # Function to generate table chart
 def plot_table_chart(aggregated_sales, save_path):
@@ -275,7 +213,7 @@ def plot_table_chart(aggregated_sales, save_path):
         # Display "Overall Oyalo Sales"
         ax.text(
             0.5, 1.0,  
-            f"OYALO SALES TODAY\nNet Amount: ₹{overall_sales['Net Amount']:,.2f} | Bill Cuts: {overall_sales['Bill Cuts']}",
+            f"OVERALL OYALO SALES\nNet Amount: ₹{overall_sales['Net Amount']:,.2f} | Bill Cuts: {overall_sales['Bill Cuts']}",
             fontsize=24, fontweight="bold", ha="center",
             transform=ax.transAxes, bbox=dict(facecolor='yellow', alpha=0.5)
         )
@@ -305,11 +243,8 @@ def plot_table_chart(aggregated_sales, save_path):
         table.set_fontsize(14)
         table.scale(1.5, 1.5)
 
-        # Save the chart to the provided buffer or path
-        if isinstance(save_path, (str, os.PathLike)):
-            plt.savefig(save_path, bbox_inches="tight", dpi=100)
-        else:
-            plt.savefig(save_path, format="png", bbox_inches="tight", dpi=100)
+        # Save the chart
+        plt.savefig(save_path, bbox_inches="tight", dpi=100)
         return True
     except Exception as e:
         print(f"Error in plot_table_chart: {e}")
@@ -336,12 +271,7 @@ def plot_net_amount_chart(aggregated_sales, save_path):
         plt.title(f"Net Amount by Branch (Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
         plt.xticks(rotation=45, ha="right")
         plt.tight_layout()
-        
-        # Save the chart to the provided buffer or path
-        if isinstance(save_path, (str, os.PathLike)):
-            plt.savefig(save_path, dpi=100)
-        else:
-            plt.savefig(save_path, format="png", dpi=100)
+        plt.savefig(save_path, dpi=100)
         return True
     except Exception as e:
         print(f"Error in plot_net_amount_chart: {e}")
@@ -369,12 +299,7 @@ def plot_bill_cuts_chart(aggregated_sales, save_path):
         plt.title(f"Bill Cuts by Branch (Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
         plt.xticks(rotation=45, ha="right")
         plt.tight_layout()
-        
-        # Save the chart to the provided buffer or path
-        if isinstance(save_path, (str, os.PathLike)):
-            plt.savefig(save_path, dpi=100)
-        else:
-            plt.savefig(save_path, format="png", dpi=100)
+        plt.savefig(save_path, dpi=100)
         return True
     except Exception as e:
         print(f"Error in plot_bill_cuts_chart: {e}")
@@ -387,7 +312,7 @@ def plot_net_amount_by_branch_type_chart(aggregated_sales, save_path):
         plt.figure(figsize=(16, 8), num=f"net_amount_by_branch_type_chart_{time.time()}")
         
         # Map branch types
-        aggregated_sales["Branch Type"] = aggregated_sales["branchCode"].astype(str).apply(map_branch_type)
+        aggregated_sales["Branch Type"] = aggregated_sales["branchCode"].astype(str).map(branch_type_mapping).fillna("Other")
 
         # Group by Branch Type and sum Net Amount
         grouped_sales = aggregated_sales.groupby("Branch Type")["Net Amount"].sum().reset_index()
@@ -409,12 +334,7 @@ def plot_net_amount_by_branch_type_chart(aggregated_sales, save_path):
         plt.title(f"Net Amount by Branch Type (Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
         plt.xticks(rotation=45, ha="right")
         plt.tight_layout()
-        
-        # Save the chart to the provided buffer or path
-        if isinstance(save_path, (str, os.PathLike)):
-            plt.savefig(save_path, dpi=100)
-        else:
-            plt.savefig(save_path, format="png", dpi=100)
+        plt.savefig(save_path, dpi=100)
         return True
     except Exception as e:
         print(f"Error in plot_net_amount_by_branch_type_chart: {e}")
@@ -427,7 +347,7 @@ def plot_bill_cuts_by_branch_type_chart(aggregated_sales, save_path):
         plt.figure(figsize=(16, 8), num=f"bill_cuts_by_branch_type_chart_{time.time()}")
         
         # Map branch codes to Branch Types
-        aggregated_sales["Branch Type"] = aggregated_sales["branchCode"].astype(str).apply(map_branch_type)
+        aggregated_sales["Branch Type"] = aggregated_sales["branchCode"].astype(str).map(branch_type_mapping).fillna("Other")
 
         # Group by Branch Type and sum Bill Cuts
         grouped_sales = aggregated_sales.groupby("Branch Type")["Bill Cuts"].sum().reset_index()
@@ -449,12 +369,7 @@ def plot_bill_cuts_by_branch_type_chart(aggregated_sales, save_path):
         plt.title(f"Bill Cuts by Branch Type (Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
         plt.xticks(rotation=45, ha="right")
         plt.tight_layout()
-        
-        # Save the chart to the provided buffer or path
-        if isinstance(save_path, (str, os.PathLike)):
-            plt.savefig(save_path, dpi=100)
-        else:
-            plt.savefig(save_path, format="png", dpi=100)
+        plt.savefig(save_path, dpi=100)
         return True
     except Exception as e:
         print(f"Error in plot_bill_cuts_by_branch_type_chart: {e}")
@@ -482,15 +397,10 @@ def serve_dashboard():
             h2 {{ margin-top: 30px; background-color: #e9e9e9; padding: 5px; }}
             .chart-container {{ text-align: center; margin-top: 10px; }}
             img {{ box-shadow: 0px 0px 10px rgba(0,0,0,0.1); max-width: 90%; }}
-            .status-message {{ background-color: #e8f4f8; padding: 10px; border-radius: 5px; margin: 10px 0; }}
         </style>
     </head>
     <body>
         <h1>Live Oyalo Sales Dashboard</h1>
-        <div class="status-message">
-            Last Refresh: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | 
-            Next Refresh: <span id="countdown">60</span> seconds
-        </div>
 
         <h2>Table View</h2>
         <div class="chart-container">
@@ -517,194 +427,92 @@ def serve_dashboard():
             <img id="bill-cuts-by-branch-type-chart" src="/chart/bill-cuts-by-branch-type?t={timestamp}" width="80%">
         </div>
         
-        <script>
-            // Countdown timer for refresh
-            let seconds = 60;
-            const countdownElem = document.getElementById('countdown');
-            setInterval(() => {{
-                seconds -= 1;
-                if (seconds <= 0) {{
-                    seconds = 60;
-                }}
-                countdownElem.textContent = seconds;
-            }}, 1000);
-            
-            // Function to refresh images
-            function refreshImages() {{
-                const timestamp = Date.now();
-                document.querySelectorAll('img').forEach(img => {{
-                    const src = img.src.split('?')[0];
-                    img.src = `${{src}}?t=${{timestamp}}`;
-                }});
-            }}
-            
-            // Refresh images every 60 seconds
-            setInterval(refreshImages, 60000);
-        </script>
     </body>
     </html>
     """)
 
-# Add chart serving routes with fallback to memory
+# Add cache control to all routes
 @app.route("/chart/table")
 def serve_table_chart():
-    try:
-        if os.path.exists(table_chart_path):
-            response = send_file(table_chart_path, mimetype="image/png")
-        else:
-            # Fallback to in-memory version
-            bytes_data = chart_memory_store.get("table")
-            if bytes_data:
-                response = Response(bytes_data, mimetype="image/png")
-            else:
-                return "Chart not available yet", 503
-        
-        # Add cache control headers
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
-        return response
-    except Exception as e:
-        print(f"Error serving table chart: {e}")
-        return "Error serving chart", 500
+    response = send_file(table_chart_path, mimetype="image/png")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 @app.route("/chart/net-amount")
 def serve_net_amount_chart():
-    try:
-        if os.path.exists(net_amount_chart_path):
-            response = send_file(net_amount_chart_path, mimetype="image/png")
-        else:
-            # Fallback to in-memory version
-            bytes_data = chart_memory_store.get("net_amount")
-            if bytes_data:
-                response = Response(bytes_data, mimetype="image/png")
-            else:
-                return "Chart not available yet", 503
-        
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
-        return response
-    except Exception as e:
-        print(f"Error serving net amount chart: {e}")
-        return "Error serving chart", 500
+    response = send_file(net_amount_chart_path, mimetype="image/png")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 @app.route("/chart/bill-cuts")
 def serve_bill_cuts_chart():
-    try:
-        if os.path.exists(bill_cuts_chart_path):
-            response = send_file(bill_cuts_chart_path, mimetype="image/png")
-        else:
-            # Fallback to in-memory version
-            bytes_data = chart_memory_store.get("bill_cuts")
-            if bytes_data:
-                response = Response(bytes_data, mimetype="image/png")
-            else:
-                return "Chart not available yet", 503
-                
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
-        return response
-    except Exception as e:
-        print(f"Error serving bill cuts chart: {e}")
-        return "Error serving chart", 500
+    response = send_file(bill_cuts_chart_path, mimetype="image/png")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 @app.route("/chart/net-amount-by-branch-type")
 def serve_net_amount_by_branch_type_chart():
-    try:
-        if os.path.exists(net_amount_by_branch_type_chart_path):
-            response = send_file(net_amount_by_branch_type_chart_path, mimetype="image/png")
-        else:
-            # Fallback to in-memory version
-            bytes_data = chart_memory_store.get("net_amount_by_branch_type")
-            if bytes_data:
-                response = Response(bytes_data, mimetype="image/png")
-            else:
-                return "Chart not available yet", 503
-                
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
-        return response
-    except Exception as e:
-        print(f"Error serving net amount by branch type chart: {e}")
-        return "Error serving chart", 500
+    response = send_file(net_amount_by_branch_type_chart_path, mimetype="image/png")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 @app.route("/chart/bill-cuts-by-branch-type")
 def serve_bill_cuts_by_branch_type_chart():
-    try:
-        if os.path.exists(bill_cuts_by_branch_type_chart_path):
-            response = send_file(bill_cuts_by_branch_type_chart_path, mimetype="image/png")
-        else:
-            # Fallback to in-memory version
-            bytes_data = chart_memory_store.get("bill_cuts_by_branch_type")
-            if bytes_data:
-                response = Response(bytes_data, mimetype="image/png")
-            else:
-                return "Chart not available yet", 503
-                
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
-        return response
-    except Exception as e:
-        print(f"Error serving bill cuts by branch type chart: {e}")
-        return "Error serving chart", 500
+    response = send_file(bill_cuts_by_branch_type_chart_path, mimetype="image/png")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 # Health check endpoint to verify charts are updating correctly
 @app.route("/health")
 def health_check_endpoint():
     issues = []
-    charts_available = 0
     
-    # Check memory store first
-    for chart_name in chart_memory_store:
-        if chart_memory_store[chart_name]:
-            charts_available += 1
-    
-    # Check disk charts
-    chart_paths = [
-        table_chart_path, 
-        net_amount_chart_path, 
-        bill_cuts_chart_path,
-        net_amount_by_branch_type_chart_path, 
-        bill_cuts_by_branch_type_chart_path
-    ]
-    
-    for chart_path in chart_paths:
-        if os.path.exists(chart_path):
-            # Check file age
-            # Continue from where the code was cut off
-            mod_time = os.path.getmtime(chart_path)
-            age_minutes = (time.time() - mod_time) / 60
+    # Check all chart files
+    for chart_path in [table_chart_path, net_amount_chart_path, bill_cuts_chart_path, 
+                       net_amount_by_branch_type_chart_path, bill_cuts_by_branch_type_chart_path]:
+        # Check file exists
+        if not os.path.exists(chart_path):
+            issues.append(f"Missing chart: {chart_path}")
+            continue
             
-            if age_minutes > 10:  # If chart is older than 10 minutes
-                issues.append(f"Chart {os.path.basename(chart_path)} is {age_minutes:.1f} minutes old")
-        else:
-            issues.append(f"Chart file {os.path.basename(chart_path)} is missing")
+        # Check file age (should be recent)
+        mod_time = os.path.getmtime(chart_path)
+        age_minutes = (time.time() - mod_time) / 60
+        if age_minutes > 10:  # If older than 10 minutes
+            issues.append(f"Stale chart: {chart_path} (last updated {age_minutes:.1f} minutes ago)")
+            
+        # Check file size (should be reasonable for a chart)
+        size = os.path.getsize(chart_path)
+        if size < 10000:  # Less than 10KB is suspicious
+            issues.append(f"Suspiciously small chart: {chart_path} ({size} bytes)")
     
-    status = "OK" if charts_available == 5 and not issues else "WARNING"
-    
-    response_data = {
-        "status": status,
-        "charts_available": charts_available,
-        "issues": issues,
-        "last_check": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    }
-    
-    return response_data
+    if issues:
+        return {"status": "unhealthy", "issues": issues}, 500
+    return {"status": "healthy"}, 200
 
 if __name__ == "__main__":
-    import os
-    port = int(os.environ.get("PORT", 10000))
-
-    print("🛠 Ensuring static directory exists before starting...")
-    ensure_static_dir()
-
-    print("🔄 Manually updating all charts before server starts...")
-    update_all_charts()  # Run first update synchronously before Flask starts
-
-    print("🚀 Starting Flask server on port", port)
-    app.run(host="0.0.0.0", port=port, debug=False)
-
+    # Create initial charts to prevent blank screens on first load
+    create_initial_charts()
+    
+    # Start a single chart generation thread instead of multiple threads
+    print("Starting chart generation thread...")
+    chart_thread = threading.Thread(target=update_all_charts, daemon=True)
+    chart_thread.start()
+    
+    # Give the thread time to generate the first set of charts
+    print("Waiting for initial charts to be generated...")
+    time.sleep(30)
+    
+    # Start Flask server
+    print("Starting Flask server...")
+    app.run(host="0.0.0.0", port=10000, debug=False, use_reloader=False)
