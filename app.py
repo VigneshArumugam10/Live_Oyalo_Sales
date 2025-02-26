@@ -507,19 +507,24 @@ def health_check_endpoint():
     return {"status": "healthy"}, 200
 
 if __name__ == "__main__":
-    # Create initial charts to prevent blank screens on first load
+    # Ensure the static directory exists
+    os.makedirs("static", exist_ok=True)
+
+    # Create initial blank charts
+    print("Generating placeholder charts...")
     create_initial_charts()
-    
-    # Start a single chart generation thread instead of multiple threads
-    print("Starting chart generation thread...")
+
+    # Immediately fetch data and generate the first set of charts
+    print("Fetching initial sales data and generating charts...")
+    update_all_charts()  # This ensures charts exist before the first request
+
+    # Start a background thread to continuously update charts
+    print("Starting background chart generation thread...")
     chart_thread = threading.Thread(target=update_all_charts, daemon=True)
     chart_thread.start()
-    
-    # Give the thread time to generate the first set of charts
-    print("Waiting for initial charts to be generated...")
-    time.sleep(30)
-    
+
     # Start Flask server
     print("Starting Flask server...")
     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
+
 
