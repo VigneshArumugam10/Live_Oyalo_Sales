@@ -67,47 +67,45 @@ def create_initial_charts():
             plt.savefig(chart_path)
             plt.close()
 
-# Function to fetch sales data from API
 def fetch_sales_data():
     all_items = []
     date_str = datetime.today().strftime('%Y-%m-%d')
+    print(f"📅 Fetching sales data for {date_str}...")
 
     for branch_code in branch_codes:
         last_key = None
+        print(f"Fetching data for branch {branch_code}...")
+
         while True:
-            # Token payload
             payload = {
                 "iss": api_key,
                 "iat": datetime.utcnow(),
                 "jti": "YOUR_UNIQUE_JWT_ID"
             }
 
-            # Generate the token
             token = jwt.encode(payload, secret_key, algorithm="HS256")
 
-            # Include the token in the headers
             headers = {
                 "x-api-key": api_key,
                 "x-api-token": token
             }
 
-            # API URL with the current date and last key
             url = f"https://api.ristaapps.com/v1/sales/summary?branch={branch_code}&day={date_str}"
             if last_key:
                 url += f"&lastKey={last_key}"
 
             try:
-                # Make the request
                 response = requests.get(url, headers=headers, timeout=10)
-                response.raise_for_status()  # Raise exception for HTTP errors
+                response.raise_for_status()
                 data = response.json().get('data', [])
 
-                # Normalize and flatten the data, then append to the list
                 if data:
+                    print(f"Data received for branch {branch_code} ({len(data)} records).")
                     flattened_data = pd.json_normalize(data)
                     all_items.append(flattened_data)
+                else:
+                    print(f" No data received for branch {branch_code}.")
 
-                # Check if there is a last key for pagination
                 last_key = response.json().get("lastKey")
                 if not last_key:
                     break
@@ -115,10 +113,12 @@ def fetch_sales_data():
                 print(f"Error fetching data for branch {branch_code}: {e}")
                 break  # Move to next branch on error
 
-    # Process data if retrieved
     if all_items:
         sales_df = pd.concat(all_items, ignore_index=True)
         closed_sales_df = sales_df[sales_df['status'] == 'Closed']
+
+        if closed_sales_df.empty:
+            print(" No closed sales records found.")
 
         aggregated_sales = closed_sales_df.groupby(['branchName', 'branchCode']).agg({
             'netAmount': 'sum',
@@ -127,49 +127,56 @@ def fetch_sales_data():
 
         aggregated_sales.rename(columns={'netAmount': 'Net Amount', 'invoiceNumber': 'Bill Cuts'}, inplace=True)
 
+        print("Sales data successfully processed.")
         return aggregated_sales
 
+    print("No sales data available.")
     return pd.DataFrame()  # Return empty DataFrame if no data
 
-# Function to generate and update all charts in a single thread
+
 def update_all_charts():
     """Single function to update all charts in sequence"""
     while True:
         try:
-            # Fetch data once for all charts
-            print("Fetching sales data...")
+            print("🔄 Fetching sales data...")
             aggregated_sales = fetch_sales_data()
             
-            if not aggregated_sales.empty:
-                print(f"Data fetched at {datetime.now()}, updating charts...")
-                
-                # Generate each chart with unique file handling
-                update_single_chart(aggregated_sales, "table", table_chart_path, plot_table_chart)
-                # Make sure previous chart is closed before starting next one
-                plt.close('all')
-                
-                update_single_chart(aggregated_sales, "net_amount", net_amount_chart_path, plot_net_amount_chart)
-                plt.close('all')
-                
-                update_single_chart(aggregated_sales, "bill_cuts", bill_cuts_chart_path, plot_bill_cuts_chart)
-                plt.close('all')
-                
-                update_single_chart(aggregated_sales, "net_amount_by_branch_type", net_amount_by_branch_type_chart_path, plot_net_amount_by_branch_type_chart)
-                plt.close('all')
-                
-                update_single_chart(aggregated_sales, "bill_cuts_by_branch_type", bill_cuts_by_branch_type_chart_path, plot_bill_cuts_by_branch_type_chart)
-                plt.close('all')
-                
-                print("All charts updated successfully")
-            else:
-                print("Warning: No data available for charts")
+            if aggregated_sales.empty:
+                print("⚠️ No data fetched from API. Skipping chart updates.")
+                continue
+
+            print(f"✅ Data fetched at {datetime.now()}, updating charts...")
+
+            update_single_chart(aggregated_sales, "table", table_chart_path, plot_table_chart)
+            print("📊 Table chart updated.")
+            plt.close('all')
+
+            update_single_chart(aggregated_sales, "net_amount", net_amount_chart_path, plot_net_amount_chart)
+            print("📊 Net Amount chart updated.")
+            plt.close('all')
+
+            update_single_chart(aggregated_sales, "bill_cuts", bill_cuts_chart_path, plot_bill_cuts_chart)
+            print("📊 Bill Cuts chart updated.")
+            plt.close('all')
+
+            update_single_chart(aggregated_sales, "net_amount_by_branch_type", net_amount_by_branch_type_chart_path, plot_net_amount_by_branch_type_chart)
+            print("📊 Net Amount by Branch Type chart updated.")
+            plt.close('all')
+
+            update_single_chart(aggregated_sales, "bill_cuts_by_branch_type", bill_cuts_by_branch_type_chart_path, plot_bill_cuts_by_branch_type_chart)
+            print("📊 Bill Cuts by Branch Type chart updated.")
+            plt.close('all')
+
+            print("✅ All charts updated successfully.")
+            
         except Exception as e:
-            print(f"Error in chart update cycle: {e}")
+            print(f"❌ Error in chart update cycle: {e}")
             import traceback
             traceback.print_exc()
-            
-        print(f"Sleeping for 5 minutes until next update...")
-        time.sleep(300)  # 5 minute refresh
+
+        print("⏳ Sleeping for 5 minutes until next update...")
+        time.sleep(300)  # 5-minute refresh
+
 
 def update_single_chart(data, chart_name, chart_path, plot_function):
     """Update a single chart with proper error handling and file management"""
@@ -219,7 +226,7 @@ def plot_table_chart(aggregated_sales, save_path):
         # Display "Overall Oyalo Sales"
         ax.text(
             0.5, 1.0,  
-            f"OVERALL OYALO SALES\nNet Amount: ₹{overall_sales['Net Amount']:,.2f} | Bill Cuts: {overall_sales['Bill Cuts']}",
+            f"OYALO SALES TODAY\nNet Amount: ₹{overall_sales['Net Amount']:,.2f} | Bill Cuts: {overall_sales['Bill Cuts']}",
             fontsize=24, fontweight="bold", ha="center",
             transform=ax.transAxes, bbox=dict(facecolor='yellow', alpha=0.5)
         )
